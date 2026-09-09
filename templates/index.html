@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel Script — Manhwa Prompt Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#15161a;
+    --paper:#f1eee6;
+    --paper-dim:#e7e2d5;
+    --red:#e63950;
+    --blue:#2e3a8c;
+    --grey:#8b8a85;
+    --line:#d8d3c4;
+    --radius:2px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Space Grotesk',sans-serif;
+    line-height:1.5;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:48px 24px 120px;}
+
+  header.hero{
+    border-bottom:6px solid var(--ink);
+    padding-bottom:20px;
+    margin-bottom:36px;
+    display:flex;
+    align-items:flex-end;
+    justify-content:space-between;
+    gap:16px;
+    flex-wrap:wrap;
+  }
+  .hero h1{
+    font-family:'Bebas Neue',sans-serif;
+    font-size:56px;
+    letter-spacing:1px;
+    margin:0;
+    line-height:0.9;
+  }
+  .hero p{margin:8px 0 0;color:var(--grey);max-width:46ch;font-size:14px;}
+  .hero .tag{
+    background:var(--red);
+    color:var(--paper);
+    font-family:'Bebas Neue',sans-serif;
+    font-size:15px;
+    letter-spacing:1px;
+    padding:6px 14px;
+    transform:rotate(-2deg);
+    white-space:nowrap;
+  }
+
+  section.panel{
+    background:#fff;
+    border:2px solid var(--ink);
+    padding:24px;
+    margin-bottom:28px;
+  }
+  section.panel h2{
+    font-family:'Bebas Neue',sans-serif;
+    font-size:22px;
+    letter-spacing:0.5px;
+    margin:0 0 16px;
+    border-bottom:2px solid var(--line);
+    padding-bottom:8px;
+  }
+
+  label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;}
+  .field{margin-bottom:18px;}
+  .field small{display:block;color:var(--grey);font-weight:400;margin-top:4px;font-size:12px;}
+  input[type=text], input[type=password]{
+    width:100%;
+    padding:10px 12px;
+    border:2px solid var(--ink);
+    border-radius:var(--radius);
+    font-family:inherit;
+    font-size:14px;
+    background:var(--paper);
+  }
+  input[type=file]{
+    width:100%;
+    padding:10px;
+    border:2px dashed var(--ink);
+    background:var(--paper);
+    font-size:13px;
+  }
+  .row{display:flex;gap:16px;flex-wrap:wrap;}
+  .row .field{flex:1;min-width:220px;}
+
+  button{
+    font-family:'Bebas Neue',sans-serif;
+    font-size:18px;
+    letter-spacing:1px;
+    background:var(--ink);
+    color:var(--paper);
+    border:2px solid var(--ink);
+    padding:12px 24px;
+    cursor:pointer;
+    border-radius:var(--radius);
+  }
+  button:hover{background:var(--red);border-color:var(--red);}
+  button:disabled{opacity:0.45;cursor:not-allowed;}
+  button.ghost{
+    background:transparent;color:var(--ink);
+  }
+  button.ghost:hover{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  button.small{
+    font-size:12px;
+    padding:6px 10px;
+    letter-spacing:0.5px;
+  }
+
+  #status-box{display:none;margin-bottom:20px;}
+  .progress-track{
+    background:var(--paper-dim);
+    border:2px solid var(--ink);
+    height:18px;
+    position:relative;
+    overflow:hidden;
+  }
+  .progress-fill{
+    background:var(--red);
+    height:100%;
+    width:0%;
+    transition:width 0.3s ease;
+  }
+  #status-text{font-size:13px;margin-top:8px;color:var(--grey);}
+  #error-box{
+    display:none;
+    background:#fff0f1;
+    border:2px solid var(--red);
+    color:#8a1626;
+    padding:14px;
+    font-size:13px;
+    margin-bottom:20px;
+  }
+
+  #bible-box{display:none;}
+  .char-chip{
+    border:1px solid var(--line);
+    border-left:4px solid var(--blue);
+    padding:10px 12px;
+    margin-bottom:8px;
+    font-size:13px;
+  }
+  .char-chip b{display:block;font-size:13px;margin-bottom:2px;}
+  .char-chip span{color:var(--grey);}
+
+  .fragment{
+    border:2px solid var(--ink);
+    margin-bottom:22px;
+    background:#fff;
+  }
+  .fragment-head{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:14px 18px;
+    border-bottom:2px solid var(--ink);
+    cursor:pointer;
+    background:var(--paper-dim);
+  }
+  .fragment-num{
+    font-family:'Bebas Neue',sans-serif;
+    font-size:26px;
+    background:var(--ink);
+    color:var(--paper);
+    width:44px;height:44px;
+    display:flex;align-items:center;justify-content:center;
+    flex-shrink:0;
+  }
+  .fragment-preview{font-size:13px;color:var(--grey);flex:1;}
+  .fragment-body{padding:18px;display:none;}
+  .fragment-body.open{display:block;}
+  .frag-text{
+    font-size:13px;
+    color:#444;
+    background:var(--paper);
+    border:1px solid var(--line);
+    padding:12px;
+    margin-bottom:18px;
+    white-space:pre-wrap;
+  }
+
+  .scenes-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;}
+  .scene-card{border:1px solid var(--ink);padding:12px;}
+  .scene-card .beat{
+    font-family:'Bebas Neue',sans-serif;
+    font-size:14px;
+    letter-spacing:1px;
+    color:var(--red);
+    margin-bottom:4px;
+  }
+  .scene-card .summary{font-size:12.5px;color:#444;margin-bottom:10px;}
+  .scene-card textarea{
+    width:100%;
+    min-height:120px;
+    font-size:12px;
+    font-family:'Space Grotesk',sans-serif;
+    border:1px solid var(--line);
+    padding:8px;
+    resize:vertical;
+    margin-bottom:8px;
+    background:var(--paper);
+  }
+
+  #export-row{display:none;margin-top:12px;}
+  footer{margin-top:40px;color:var(--grey);font-size:12px;text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div>
+      <h1>PANEL SCRIPT</h1>
+      <p>Turn a chapter into fragments, scenes, and character-consistent Whisk prompts for manhwa-style illustration.</p>
+    </div>
+    <div class="tag">GROQ-POWERED</div>
+  </header>
+
+  <section class="panel" id="setup-panel">
+    <h2>01 — Source &amp; Key</h2>
+    <div class="row">
+      <div class="field">
+        <label for="api_key">Groq API key</label>
+        <input type="password" id="api_key" placeholder="gsk_...">
+        <small>Sent directly to your local server, then to Groq. Not stored anywhere.</small>
+      </div>
+      <div class="field">
+        <label for="model">Model</label>
+        <input type="text" id="model" value="{{ default_model }}">
+        <small>Any Groq chat model that supports JSON responses.</small>
+      </div>
+    </div>
+    <div class="field">
+      <label for="file">Source document (.txt or .pdf)</label>
+      <input type="file" id="file" accept=".txt,.pdf">
+    </div>
+    <button id="start-btn">Generate Prompts</button>
+  </section>
+
+  <div id="status-box">
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div id="status-text">Starting…</div>
+  </div>
+
+  <div id="error-box"></div>
+
+  <section class="panel" id="bible-box">
+    <h2>Character Bible</h2>
+    <div id="bible-list"></div>
+  </section>
+
+  <div id="fragments-list"></div>
+
+  <div id="export-row">
+    <button class="ghost" id="export-btn">Export all prompts (.json)</button>
+  </div>
+
+  <footer>Panel Script runs locally — your document and key never leave your machine except to call Groq.</footer>
+</div>
+
+<script>
+let currentJob = null;
+let pollTimer = null;
+
+const startBtn = document.getElementById('start-btn');
+const statusBox = document.getElementById('status-box');
+const statusText = document.getElementById('status-text');
+const progressFill = document.getElementById('progress-fill');
+const errorBox = document.getElementById('error-box');
+const bibleBox = document.getElementById('bible-box');
+const bibleList = document.getElementById('bible-list');
+const fragmentsList = document.getElementById('fragments-list');
+const exportRow = document.getElementById('export-row');
+const exportBtn = document.getElementById('export-btn');
+
+let renderedCount = 0;
+
+startBtn.addEventListener('click', async () => {
+  const apiKey = document.getElementById('api_key').value.trim();
+  const model = document.getElementById('model').value.trim();
+  const fileInput = document.getElementById('file');
+
+  if (!apiKey) { showError('Enter your Groq API key first.'); return; }
+  if (!fileInput.files.length) { showError('Choose a .txt or .pdf file first.'); return; }
+
+  errorBox.style.display = 'none';
+  fragmentsList.innerHTML = '';
+  bibleList.innerHTML = '';
+  bibleBox.style.display = 'none';
+  exportRow.style.display = 'none';
+  renderedCount = 0;
+  startBtn.disabled = true;
+  startBtn.textContent = 'Working…';
+
+  const form = new FormData();
+  form.append('api_key', apiKey);
+  form.append('model', model);
+  form.append('file', fileInput.files[0]);
+
+  try {
+    const res = await fetch('/api/start', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) { showError(data.error || 'Failed to start.'); resetStartBtn(); return; }
+    currentJob = data.job_id;
+    statusBox.style.display = 'block';
+    statusText.textContent = `Processing fragment 0 of ${data.total}…`;
+    pollTimer = setInterval(poll, 1400);
+  } catch (e) {
+    showError('Could not reach the local server: ' + e.message);
+    resetStartBtn();
+  }
+});
+
+function resetStartBtn(){
+  startBtn.disabled = false;
+  startBtn.textContent = 'Generate Prompts';
+}
+
+function showError(msg){
+  errorBox.textContent = msg;
+  errorBox.style.display = 'block';
+}
+
+async function poll(){
+  if (!currentJob) return;
+  const res = await fetch(`/api/status/${currentJob}`);
+  const data = await res.json();
+  if (data.error && data.status !== 'error') { return; }
+
+  const pct = data.total ? Math.round((data.progress / data.total) * 100) : 0;
+  progressFill.style.width = pct + '%';
+  statusText.textContent = `Processing fragment ${data.progress} of ${data.total}…`;
+
+  renderNewFragments(data.fragments);
+  renderBible(data.character_bible);
+
+  if (data.status === 'done') {
+    clearInterval(pollTimer);
+    statusText.textContent = `Done — ${data.total} fragments, ${data.total * 3} prompts generated.`;
+    progressFill.style.width = '100%';
+    exportRow.style.display = 'block';
+    resetStartBtn();
+  } else if (data.status === 'error') {
+    clearInterval(pollTimer);
+    showError(data.error || 'Something went wrong calling Groq.');
+    resetStartBtn();
+  }
+}
+
+function renderBible(bible){
+  const names = Object.keys(bible || {});
+  if (!names.length) return;
+  bibleBox.style.display = 'block';
+  bibleList.innerHTML = names.map(name => `
+    <div class="char-chip">
+      <b>${escapeHtml(name)}</b>
+      <span>${escapeHtml(bible[name].description || '')}</span>
+    </div>
+  `).join('');
+}
+
+function renderNewFragments(fragments){
+  for (let i = renderedCount; i < fragments.length; i++){
+    fragmentsList.insertAdjacentHTML('beforeend', fragmentCard(fragments[i]));
+  }
+  renderedCount = fragments.length;
+}
+
+function fragmentCard(frag){
+  const scenesHtml = (frag.scenes || []).map(scene => `
+    <div class="scene-card">
+      <div class="beat">Scene ${scene.scene_number} — ${escapeHtml(scene.beat || '')}</div>
+      <div class="summary">${escapeHtml(scene.summary || '')}</div>
+      <textarea readonly>${escapeHtml(scene.prompt || '')}</textarea>
+      <button class="ghost small" onclick="copyPrompt(this)">Copy prompt</button>
+    </div>
+  `).join('');
+
+  const preview = (frag.text || '').slice(0, 90).replace(/\n/g, ' ');
+
+  return `
+    <div class="fragment">
+      <div class="fragment-head" onclick="toggleFragment(this)">
+        <div class="fragment-num">${frag.index + 1}</div>
+        <div class="fragment-preview">${escapeHtml(preview)}${frag.text.length > 90 ? '…' : ''}</div>
+      </div>
+      <div class="fragment-body">
+        <div class="frag-text">${escapeHtml(frag.text)}</div>
+        <div class="scenes-grid">${scenesHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
+function toggleFragment(headEl){
+  const body = headEl.nextElementSibling;
+  body.classList.toggle('open');
+}
+
+function copyPrompt(btn){
+  const textarea = btn.previousElementSibling;
+  navigator.clipboard.writeText(textarea.value).then(() => {
+    const original = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = original; }, 1200);
+  });
+}
+
+exportBtn.addEventListener('click', () => {
+  if (!currentJob) return;
+  window.location.href = `/api/export/${currentJob}`;
+});
+
+function escapeHtml(str){
+  return (str || '').replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
+</script>
+</body>
+</html>
