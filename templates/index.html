@@ -90,6 +90,15 @@
     background:var(--paper);
     font-size:13px;
   }
+  select{
+    width:100%;
+    padding:10px 12px;
+    border:2px solid var(--ink);
+    border-radius:var(--radius);
+    font-family:inherit;
+    font-size:14px;
+    background:var(--paper);
+  }
   .row{display:flex;gap:16px;flex-wrap:wrap;}
   .row .field{flex:1;min-width:220px;}
 
@@ -198,6 +207,24 @@
     margin-bottom:4px;
   }
   .scene-card .summary{font-size:12.5px;color:#444;margin-bottom:10px;}
+  .panel-list{
+    list-style:none;
+    margin:0 0 10px;
+    padding:0;
+    font-size:12px;
+    color:#333;
+  }
+  .panel-list li{
+    padding:6px 0 6px 10px;
+    border-left:3px solid var(--line);
+    margin-bottom:6px;
+  }
+  .panel-list b{color:var(--ink);}
+  .panel-list .bubble{
+    display:inline-block;
+    color:var(--red);
+    font-style:italic;
+  }
   .scene-card textarea{
     width:100%;
     min-height:120px;
@@ -220,7 +247,7 @@
   <header class="hero">
     <div>
       <h1>PANEL SCRIPT</h1>
-      <p>Turn a chapter into fragments, scenes, and character-consistent Whisk prompts for manhwa-style illustration.</p>
+      <p>Turn a chapter into fragments, beats, and character-consistent Whisk prompts for full multi-panel manhwa page illustration.</p>
     </div>
     <div class="tag">GROQ-POWERED</div>
   </header>
@@ -239,9 +266,20 @@
         <small>Any Groq chat model that supports JSON responses.</small>
       </div>
     </div>
-    <div class="field">
-      <label for="file">Source document (.txt or .pdf)</label>
-      <input type="file" id="file" accept=".txt,.pdf">
+    <div class="row">
+      <div class="field">
+        <label for="file">Source document (.txt or .pdf)</label>
+        <input type="file" id="file" accept=".txt,.pdf">
+      </div>
+      <div class="field" style="max-width:200px;">
+        <label for="panels">Panels per page image</label>
+        <select id="panels">
+          <option value="2">2 panels</option>
+          <option value="3" selected>3 panels</option>
+          <option value="4">4 panels</option>
+        </select>
+        <small>Each of the 3 beats becomes one composite page with this many panel divisions.</small>
+      </div>
     </div>
     <button id="start-btn">Generate Prompts</button>
   </section>
@@ -287,6 +325,7 @@ let renderedCount = 0;
 startBtn.addEventListener('click', async () => {
   const apiKey = document.getElementById('api_key').value.trim();
   const model = document.getElementById('model').value.trim();
+  const panels = document.getElementById('panels').value;
   const fileInput = document.getElementById('file');
 
   if (!apiKey) { showError('Enter your Groq API key first.'); return; }
@@ -304,6 +343,7 @@ startBtn.addEventListener('click', async () => {
   const form = new FormData();
   form.append('api_key', apiKey);
   form.append('model', model);
+  form.append('panels', panels);
   form.append('file', fileInput.files[0]);
 
   try {
@@ -375,13 +415,21 @@ function renderNewFragments(fragments){
   renderedCount = fragments.length;
 }
 
+function panelsHtml(panels){
+  if (!panels || !panels.length) return '';
+  return `<ul class="panel-list">${panels.map(p => `
+    <li><b>Panel ${p.panel_number}</b> (${escapeHtml(p.shot || '')}) — ${escapeHtml(p.description || '')}${p.dialogue ? ` <span class="bubble">“${escapeHtml(p.dialogue)}”</span>` : ''}</li>
+  `).join('')}</ul>`;
+}
+
 function fragmentCard(frag){
   const scenesHtml = (frag.scenes || []).map(scene => `
     <div class="scene-card">
-      <div class="beat">Scene ${scene.scene_number} — ${escapeHtml(scene.beat || '')}</div>
+      <div class="beat">Beat ${scene.scene_number} — ${escapeHtml(scene.beat || '')} · ${scene.panel_count || (scene.panels || []).length || ''} panels</div>
       <div class="summary">${escapeHtml(scene.summary || '')}</div>
+      ${panelsHtml(scene.panels)}
       <textarea readonly>${escapeHtml(scene.prompt || '')}</textarea>
-      <button class="ghost small" onclick="copyPrompt(this)">Copy prompt</button>
+      <button class="ghost small" onclick="copyPrompt(this)">Copy page prompt</button>
     </div>
   `).join('');
 

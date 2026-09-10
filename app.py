@@ -2,8 +2,11 @@
 Manhwa Prompt Studio
 ---------------------
 Turns a .txt or .pdf narrative into text fragments, splits each fragment into
-3 sequential scenes, and generates 3 Whisk-ready, character-consistent,
-Korean-manhwa-style image prompts per fragment using the Groq API.
+3 sequential beats, and generates 3 Whisk-ready, character-consistent prompts
+per fragment using the Groq API. Each prompt describes one composite manhwa
+PAGE image — several panels divided by comic gutters within a single image,
+matching real webtoon page layout (mixed panel sizes, diagonal cuts, inset
+close-ups, optional speech-bubble dialogue) rather than one clean single shot.
 
 Run:
     pip install -r requirements.txt
@@ -36,58 +39,92 @@ JOBS_LOCK = threading.Lock()
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
-SYSTEM_PROMPT = """You are a professional visual director for Korean manhwa \
-(webtoon) adaptations. You convert narrative text fragments into precise, \
-visually consistent AI image-generation prompts optimized for Google Whisk.
+def build_system_prompt(panel_count: int) -> str:
+    return f"""You are a professional visual director/letterer for Korean \
+manhwa (webtoon) adaptations. You convert narrative text fragments into \
+precise, visually consistent AI image-generation prompts optimized for \
+Google Whisk. Every image you design is a single composite manhwa PAGE \
+containing {panel_count} distinct panels divided by bold black comic \
+gutters within one image - never a single clean standalone shot.
 
 RULES YOU MUST FOLLOW:
 
-1. CHARACTER CONSISTENCY. Maintain a running character bible across the whole \
-document. For every character who appears or is referenced in the fragment, \
-you must know fixed visual traits: apparent age range, hair color and style, \
-eye color, build/height, signature clothing, and any distinguishing features \
-(scars, glasses, accessories). If CURRENT_CHARACTER_BIBLE already contains a \
-character, you must reuse that character's "description" string exactly as \
-given, word for word. Never alter, rephrase, or add new traits to an already \
-established character. If the fragment introduces a character not yet in the \
-bible, invent a concrete, specific appearance for them (never vague like \
-"a person") and add them as new.
+1. CHARACTER CONSISTENCY. Maintain a running character bible across the \
+whole document. For every character who appears or is referenced in the \
+fragment, you must know fixed visual traits: apparent age range, hair color \
+and style, eye color, build/height, signature clothing, and any \
+distinguishing features (scars, glasses, accessories). If \
+CURRENT_CHARACTER_BIBLE already contains a character, you must reuse that \
+character's "description" string exactly as given, word for word. Never \
+alter, rephrase, or add new traits to an already established character. If \
+the fragment introduces a character not yet in the bible, invent a \
+concrete, specific appearance for them (never vague like "a person") and \
+add them as new.
 
-2. SCENE BREAKDOWN. Split the given fragment into exactly 3 sequential scenes \
-that show, in order, what happens in the fragment, forming steady visual \
-pacing:
-   - Scene 1 = setup / establishing beat (wide shot, setting and mood)
-   - Scene 2 = development beat (medium shot, character interaction, emotion \
-     or action)
-   - Scene 3 = turning point / closing beat of the fragment (close-up or a \
-     more dynamic shot)
+2. BEAT BREAKDOWN. Split the given fragment into exactly 3 sequential beats \
+that show, in order, what happens in the fragment, forming steady pacing \
+across the fragment:
+   - Beat 1 = setup / establishing beat
+   - Beat 2 = development beat (interaction, emotion, or action)
+   - Beat 3 = turning point / closing beat of the fragment
 
-3. IMAGE PROMPTS. For each scene write exactly one dense, comma-separated \
-visual-attribute prompt (not a narrative sentence), 40-80 words, in this \
-shape:
+3. EACH BEAT IS ONE MULTI-PANEL PAGE IMAGE. For every beat, design ONE \
+manhwa page composed of exactly {panel_count} panels laid out the way real \
+webtoon pages are: a non-uniform grid mixing panel sizes (e.g. one large \
+dominant panel plus one or two smaller inset panels), gutters that can be \
+straight or dynamically diagonal, and shot variety across the panels (wide \
+establishing shot, medium interaction shot, dramatic close-up on a face, or \
+a small inset of a hand/object/detail). Decide concretely what each \
+individual panel in the page shows - do not just repeat the same shot \
+{panel_count} times.
+   - If the fragment contains actual spoken dialogue for that beat, pick at \
+     most one short line (max 8 words, quoted exactly from the text) and \
+     place it in a speech bubble inside the panel where that character is \
+     speaking. Only add a bubble when the source text actually has dialogue \
+     for that beat - never invent lines. Most panels will have no bubble.
+   - Sound-effect panels (impact, footsteps, a slammed door, rain) may carry \
+     a short bold sound-effect word instead of a speech bubble, only when \
+     the text implies that sound.
+
+4. THE "prompt" FIELD. For each beat, write ONE dense, comma-separated \
+visual-attribute prompt (not a narrative paragraph), roughly 90-160 words, \
+that describes the WHOLE PAGE as a single image for Whisk to generate:
    - Open with a fixed style tag: "Korean manhwa style digital illustration, \
-     clean linework, soft cel-shading, webtoon color palette"
-   - Then the exact appearance descriptors (copied verbatim from the bible) \
-     for every character present in that scene
-   - Then setting/environment, lighting, camera framing (wide shot / medium \
-     shot / close-up matching the scene's beat), mood/atmosphere, and the key \
-     action or expression happening
-   - Do not use character names inside the prompt text itself (Whisk cannot \
-     resolve names) - describe people only by their visual traits
-   - No dialogue, no quotation marks, no camera-brand or artist names
+     clean linework, soft cel-shading, webtoon color palette, comic page \
+     layout with bold black panel gutters"
+   - State the panel layout in one clause (e.g. "page divided into \
+     {panel_count} panels: one large diagonal panel top-left, two smaller \
+     stacked panels right")
+   - Then, panel by panel, the exact appearance descriptors (copied \
+     verbatim from the bible) for every character in that panel, the \
+     setting/environment, lighting, camera framing, mood, and the key \
+     action or expression - plus a note of any speech-bubble or \
+     sound-effect text and roughly where it sits in the panel
+   - Do not use character names inside the prose description of each panel \
+     (Whisk cannot resolve names) - describe people only by their visual \
+     traits. Quoted bubble/sound-effect text is the only text allowed.
 
-4. OUTPUT FORMAT. Respond with STRICT JSON ONLY - no markdown fences, no \
+5. OUTPUT FORMAT. Respond with STRICT JSON ONLY - no markdown fences, no \
 prose before or after. Schema:
-{
-  "characters": {
-    "<character name>": {"description": "<full appearance descriptor string>", "new": true|false}
-  },
+{{
+  "characters": {{
+    "<character name>": {{"description": "<full appearance descriptor string>", "new": true|false}}
+  }},
   "scenes": [
-    {"scene_number": 1, "beat": "setup", "summary": "<one sentence, what happens>", "characters_present": ["<name>"], "prompt": "<the image prompt>"},
-    {"scene_number": 2, "beat": "development", "summary": "...", "characters_present": [...], "prompt": "..."},
-    {"scene_number": 3, "beat": "turn", "summary": "...", "characters_present": [...], "prompt": "..."}
+    {{
+      "scene_number": 1, "beat": "setup", "summary": "<one sentence, what happens>",
+      "characters_present": ["<name>"],
+      "panel_count": {panel_count},
+      "panels": [
+        {{"panel_number": 1, "shot": "wide|medium|close-up|inset", "description": "<what this single panel shows>", "dialogue": "<short quoted line, or null>"}}
+      ],
+      "prompt": "<the single combined image prompt for the whole {panel_count}-panel page>"
+    }},
+    {{ "scene_number": 2, "beat": "development", ... same shape ... }},
+    {{ "scene_number": 3, "beat": "turn", ... same shape ... }}
   ]
-}
+}}
+The "panels" array must contain exactly {panel_count} entries per scene. \
 Only include characters relevant to this fragment in "characters"."""
 
 
@@ -145,7 +182,7 @@ def split_into_fragments(text: str, target_min: int = 120, target_max: int = 320
 # Groq call
 # ---------------------------------------------------------------------------
 
-def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: str) -> dict:
+def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: str, panel_count: int) -> dict:
     user_prompt = (
         "CURRENT_CHARACTER_BIBLE (reuse these descriptions verbatim for "
         "characters already listed here):\n"
@@ -156,7 +193,7 @@ def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: st
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_prompt(panel_count)},
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.6,
@@ -181,12 +218,12 @@ def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: st
 # Background job processing
 # ---------------------------------------------------------------------------
 
-def process_job(job_id: str, api_key: str, model: str, fragments: list):
+def process_job(job_id: str, api_key: str, model: str, fragments: list, panel_count: int):
     job = JOBS[job_id]
     character_bible = {}
     for idx, frag_text in enumerate(fragments):
         try:
-            result = call_groq(api_key, model, character_bible, frag_text)
+            result = call_groq(api_key, model, character_bible, frag_text, panel_count)
         except Exception as exc:
             with JOBS_LOCK:
                 job["status"] = "error"
@@ -225,6 +262,12 @@ def api_start():
     model = request.form.get("model", "").strip() or DEFAULT_MODEL
     upload = request.files.get("file")
 
+    try:
+        panel_count = int(request.form.get("panels", 3))
+    except ValueError:
+        panel_count = 3
+    panel_count = max(2, min(4, panel_count))
+
     if not api_key:
         return jsonify({"error": "Missing Groq API key."}), 400
     if not upload:
@@ -252,15 +295,16 @@ def api_start():
         "total": len(fragments),
         "fragments": [],
         "character_bible": {},
+        "panel_count": panel_count,
         "error": None,
     }
 
     thread = threading.Thread(
-        target=process_job, args=(job_id, api_key, model, fragments), daemon=True
+        target=process_job, args=(job_id, api_key, model, fragments, panel_count), daemon=True
     )
     thread.start()
 
-    return jsonify({"job_id": job_id, "total": len(fragments)})
+    return jsonify({"job_id": job_id, "total": len(fragments), "panel_count": panel_count})
 
 
 @app.route("/api/status/<job_id>")
@@ -285,6 +329,7 @@ def api_export(job_id):
     if not job:
         return jsonify({"error": "Unknown job id."}), 404
     export = {
+        "panel_count": job.get("panel_count"),
         "character_bible": job["character_bible"],
         "fragments": job["fragments"],
     }
