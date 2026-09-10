@@ -144,16 +144,39 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
 
 SCENE_BREAK_RE = re.compile(r"\n[ \t]*(?:\*[ \t]*\*[ \t]*\*|-{3,}|_{3,}|#{2,}|~{3,})[ \t]*\n")
-PARA_SPLIT_RE = re.compile(r"\n\s*\n")
+# Splits on ANY run of newlines, not just blank-line paragraph breaks. Many
+# web-novel / translated .txt files put one sentence per line with no blank
+# lines at all - if we only split on blank lines, a whole chapter becomes a
+# single unsplittable "paragraph". Splitting on single newlines too means a
+# blank-line-paragraph document and a one-line-per-sentence document both
+# get broken into the same kind of small groupable units.
+PARA_SPLIT_RE = re.compile(r"\n+")
+
+
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?\u3002\uff01\uff1f])\s+")
+
+
+def _expand_oversized(paragraph: str, target_max: int):
+    """Fallback for a single unbreakable block of text (e.g. a PDF paragraph
+    with no internal line breaks at all) that is still far too large after
+    line/paragraph splitting. Breaks it up by sentence so it can still be
+    grouped into reasonably sized fragments instead of becoming one huge,
+    unsplittable unit."""
+    if len(paragraph.split()) <= target_max * 2:
+        return [paragraph]
+    sentences = [s.strip() for s in SENTENCE_SPLIT_RE.split(paragraph) if s.strip()]
+    return sentences if len(sentences) > 1 else [paragraph]
 
 
 def split_into_fragments(text: str, target_min: int = 120, target_max: int = 320):
     """Split text into fragments along paragraph and scene-break boundaries.
 
     Explicit scene-break markers (***, ---, etc.) always force a fragment
-    boundary. Within a section, consecutive paragraphs are grouped together
-    until the soft target_max word count is reached, so fragments stay
-    reasonably sized while never being cut mid-paragraph.
+    boundary. Within a section, consecutive paragraphs/lines are grouped
+    together until the soft target_max word count is reached, so fragments
+    stay reasonably sized while never being cut mid-line. A paragraph that is
+    itself still oversized (no line breaks at all) is further split by
+    sentence as a fallback.
     """
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     sections = SCENE_BREAK_RE.split(text)
@@ -163,7 +186,10 @@ def split_into_fragments(text: str, target_min: int = 120, target_max: int = 320
         section = section.strip()
         if not section:
             continue
-        paragraphs = [p.strip() for p in PARA_SPLIT_RE.split(section) if p.strip()]
+        raw_units = [p.strip() for p in PARA_SPLIT_RE.split(section) if p.strip()]
+        paragraphs = []
+        for unit in raw_units:
+            paragraphs.extend(_expand_oversized(unit, target_max))
         current, current_words = [], 0
         for para in paragraphs:
             wc = len(para.split())
@@ -182,7 +208,29 @@ def split_into_fragments(text: str, target_min: int = 120, target_max: int = 320
 # Groq call
 # ---------------------------------------------------------------------------
 
-def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: str, panel_count: int) -> dict:
+def _validate_result(result: dict, panel_count: int) -> str:
+    """Returns an error message describing what's wrong, or '' if the parsed
+    JSON actually has the shape we asked for. Used to catch a model response
+    that came back truncated or empty instead of silently accepting it."""
+    if not isinstance(result, dict):
+        return "response was not a JSON object"
+    scenes = result.get("scenes")
+    if not isinstance(scenes, list) or len(scenes) != 3:
+        return f"expected 3 scenes, got {len(scenes) if isinstance(scenes, list) else 'none'}"
+    for scene in scenes:
+        if not scene.get("prompt"):
+            return f"scene {scene.get('scene_number', '?')} has no prompt"
+        panels = scene.get("panels")
+        if not isinstance(panels, list) or len(panels) != panel_count:
+            return (
+                f"scene {scene.get('scene_number', '?')} has "
+                f"{len(panels) if isinstance(panels, list) else 0} panels, expected {panel_count}"
+            )
+    return ""
+
+
+def _groq_request(api_key: str, model: str, character_bible: dict, fragment_text: str,
+                   panel_count: int, extra_instruction: str = "") -> dict:
     user_prompt = (
         "CURRENT_CHARACTER_BIBLE (reuse these descriptions verbatim for "
         "characters already listed here):\n"
@@ -190,6 +238,13 @@ def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: st
         "FRAGMENT TEXT:\n"
         f"{fragment_text}"
     )
+    if extra_instruction:
+        user_prompt += f"\n\n{extra_instruction}"
+
+    # Scale the token budget with how many panels we're asking for per scene,
+    # so larger panel counts don't get silently truncated mid-JSON.
+    max_tokens = 1400 + panel_count * 500
+
     payload = {
         "model": model,
         "messages": [
@@ -197,7 +252,7 @@ def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: st
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.6,
-        "max_tokens": 1600,
+        "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
     resp = requests.post(
@@ -211,7 +266,33 @@ def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: st
 
     content = resp.json()["choices"][0]["message"]["content"].strip()
     content = re.sub(r"^```(json)?|```$", "", content, flags=re.MULTILINE).strip()
-    return json.loads(content)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Groq returned invalid JSON ({exc}); response may have been truncated") from exc
+
+
+def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: str, panel_count: int) -> dict:
+    """Calls Groq and validates the shape of the response. Retries once with
+    a stricter reminder if the JSON is malformed, truncated, or missing
+    scenes/panels, instead of silently returning an empty/partial result."""
+    result = _groq_request(api_key, model, character_bible, fragment_text, panel_count)
+    problem = _validate_result(result, panel_count)
+    if not problem:
+        return result
+
+    retry_note = (
+        "Your previous response was invalid: "
+        f"{problem}. Respond again with STRICT JSON ONLY, matching the schema "
+        f"exactly - exactly 3 scenes, each with exactly {panel_count} panels and "
+        "a non-empty prompt. Keep panel descriptions concise so the full JSON "
+        "fits in the response."
+    )
+    result = _groq_request(api_key, model, character_bible, fragment_text, panel_count, retry_note)
+    problem = _validate_result(result, panel_count)
+    if problem:
+        raise RuntimeError(f"Groq response still invalid after retry: {problem}")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +308,7 @@ def process_job(job_id: str, api_key: str, model: str, fragments: list, panel_co
         except Exception as exc:
             with JOBS_LOCK:
                 job["status"] = "error"
-                job["error"] = str(exc)
+                job["error"] = f"Fragment {idx + 1} of {len(fragments)} failed: {exc}"
             return
 
         for name, info in (result.get("characters") or {}).items():
