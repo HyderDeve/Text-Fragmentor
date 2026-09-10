@@ -124,6 +124,13 @@
     padding:6px 10px;
     letter-spacing:0.5px;
   }
+  .style-presets{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    margin-top:8px;
+  }
+  .style-presets button{font-family:'Space Grotesk',sans-serif;letter-spacing:0;}
 
   #status-box{display:none;margin-bottom:20px;}
   .progress-track{
@@ -281,6 +288,15 @@
         <small>Each of the 3 beats becomes one composite page with this many panel divisions.</small>
       </div>
     </div>
+    <div class="field">
+      <label for="art_style">Art style tag</label>
+      <input type="text" id="art_style" value="{{ default_art_style }}">
+      <div class="style-presets">
+        <button type="button" class="ghost small" data-style="Korean manhwa style digital illustration, clean linework, soft cel-shading, webtoon color palette, comic page layout with bold black panel gutters">Action / fantasy manhwa</button>
+        <button type="button" class="ghost small" data-style="soft Korean webtoon slice-of-life illustration style, warm pastel sunset color palette, gentle rounded character proportions, clean thin linework, thin soft white panel gutters with subtle drop shadow, cozy lighting">Slice-of-life webtoon</button>
+      </div>
+      <small>Sent verbatim as the opening style tag of every prompt — this is what most controls the overall look.</small>
+    </div>
     <button id="start-btn">Generate Prompts</button>
   </section>
 
@@ -322,10 +338,17 @@ const exportBtn = document.getElementById('export-btn');
 
 let renderedCount = 0;
 
+document.querySelectorAll('.style-presets button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.getElementById('art_style').value = btn.dataset.style;
+  });
+});
+
 startBtn.addEventListener('click', async () => {
   const apiKey = document.getElementById('api_key').value.trim();
   const model = document.getElementById('model').value.trim();
   const panels = document.getElementById('panels').value;
+  const artStyle = document.getElementById('art_style').value.trim();
   const fileInput = document.getElementById('file');
 
   if (!apiKey) { showError('Enter your Groq API key first.'); return; }
@@ -344,6 +367,7 @@ startBtn.addEventListener('click', async () => {
   form.append('api_key', apiKey);
   form.append('model', model);
   form.append('panels', panels);
+  form.append('art_style', artStyle);
   form.append('file', fileInput.files[0]);
 
   try {
