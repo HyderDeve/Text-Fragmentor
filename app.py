@@ -14,12 +14,14 @@ Run:
 Then open http://127.0.0.1:5050 in your browser.
 """
 
+import html
 import io
 import json
 import re
 import threading
 import uuid
 
+from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify, render_template
 import requests
 
@@ -39,13 +41,20 @@ JOBS_LOCK = threading.Lock()
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
-def build_system_prompt(panel_count: int) -> str:
+DEFAULT_ART_STYLE = (
+    "Korean manhwa style digital illustration, clean linework, soft "
+    "cel-shading, webtoon color palette, comic page layout with bold black "
+    "panel gutters"
+)
+
+
+def build_system_prompt(panel_count: int, art_style: str) -> str:
     return f"""You are a professional visual director/letterer for Korean \
 manhwa (webtoon) adaptations. You convert narrative text fragments into \
 precise, visually consistent AI image-generation prompts optimized for \
 Google Whisk. Every image you design is a single composite manhwa PAGE \
-containing {panel_count} distinct panels divided by bold black comic \
-gutters within one image - never a single clean standalone shot.
+containing {panel_count} distinct panels divided by comic gutters within \
+one image - never a single clean standalone shot.
 
 RULES YOU MUST FOLLOW:
 
@@ -89,9 +98,7 @@ individual panel in the page shows - do not just repeat the same shot \
 4. THE "prompt" FIELD. For each beat, write ONE dense, comma-separated \
 visual-attribute prompt (not a narrative paragraph), roughly 90-160 words, \
 that describes the WHOLE PAGE as a single image for Whisk to generate:
-   - Open with a fixed style tag: "Korean manhwa style digital illustration, \
-     clean linework, soft cel-shading, webtoon color palette, comic page \
-     layout with bold black panel gutters"
+   - Open with this fixed style tag, verbatim: "{art_style}"
    - State the panel layout in one clause (e.g. "page divided into \
      {panel_count} panels: one large diagonal panel top-left, two smaller \
      stacked panels right")
@@ -141,6 +148,40 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         except Exception:
             pages.append("")
     return "\n\n".join(pages)
+
+
+HTML_TAG_RE = re.compile(r"<[a-zA-Z!/][^>]{0,120}>")
+INVISIBLE_CHARS_RE = re.compile(r"[\u00a0\u200b\u200c\u200d\ufeff]")
+TRAILING_SPACE_RE = re.compile(r"[ \t]+\n")
+MULTI_BLANK_RE = re.compile(r"\n{3,}")
+
+
+def clean_text(raw: str) -> str:
+    """Normalizes messy extracted/pasted text before fragmenting. Uses
+    BeautifulSoup to strip any HTML markup (common when a chapter has been
+    copied from a web page and still has stray <p>, <br>, <span> tags or
+    HTML entities like &nbsp;/&quot; in it) and tidies up invisible/odd
+    whitespace characters that would otherwise confuse the paragraph/line
+    based fragment splitter."""
+    text = raw
+
+    if HTML_TAG_RE.search(text):
+        soup = BeautifulSoup(text, "html.parser")
+        # Turn block-level/line-break tags into actual newlines before
+        # extracting text, so paragraph structure survives the tag strip
+        # instead of collapsing into one run-on line.
+        for br in soup.find_all("br"):
+            br.replace_with("\n")
+        for block in soup.find_all(["p", "div", "li", "h1", "h2", "h3", "h4", "h5"]):
+            block.append("\n")
+        text = soup.get_text()
+
+    text = html.unescape(text)
+    text = INVISIBLE_CHARS_RE.sub(" ", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = TRAILING_SPACE_RE.sub("\n", text)
+    text = MULTI_BLANK_RE.sub("\n\n", text)
+    return text.strip()
 
 
 SCENE_BREAK_RE = re.compile(r"\n[ \t]*(?:\*[ \t]*\*[ \t]*\*|-{3,}|_{3,}|#{2,}|~{3,})[ \t]*\n")
@@ -230,7 +271,7 @@ def _validate_result(result: dict, panel_count: int) -> str:
 
 
 def _groq_request(api_key: str, model: str, character_bible: dict, fragment_text: str,
-                   panel_count: int, extra_instruction: str = "") -> dict:
+                   panel_count: int, art_style: str, extra_instruction: str = "") -> dict:
     user_prompt = (
         "CURRENT_CHARACTER_BIBLE (reuse these descriptions verbatim for "
         "characters already listed here):\n"
@@ -248,7 +289,7 @@ def _groq_request(api_key: str, model: str, character_bible: dict, fragment_text
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": build_system_prompt(panel_count)},
+            {"role": "system", "content": build_system_prompt(panel_count, art_style)},
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.6,
@@ -272,11 +313,12 @@ def _groq_request(api_key: str, model: str, character_bible: dict, fragment_text
         raise RuntimeError(f"Groq returned invalid JSON ({exc}); response may have been truncated") from exc
 
 
-def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: str, panel_count: int) -> dict:
+def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: str,
+              panel_count: int, art_style: str) -> dict:
     """Calls Groq and validates the shape of the response. Retries once with
     a stricter reminder if the JSON is malformed, truncated, or missing
     scenes/panels, instead of silently returning an empty/partial result."""
-    result = _groq_request(api_key, model, character_bible, fragment_text, panel_count)
+    result = _groq_request(api_key, model, character_bible, fragment_text, panel_count, art_style)
     problem = _validate_result(result, panel_count)
     if not problem:
         return result
@@ -288,7 +330,7 @@ def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: st
         "a non-empty prompt. Keep panel descriptions concise so the full JSON "
         "fits in the response."
     )
-    result = _groq_request(api_key, model, character_bible, fragment_text, panel_count, retry_note)
+    result = _groq_request(api_key, model, character_bible, fragment_text, panel_count, art_style, retry_note)
     problem = _validate_result(result, panel_count)
     if problem:
         raise RuntimeError(f"Groq response still invalid after retry: {problem}")
@@ -299,12 +341,12 @@ def call_groq(api_key: str, model: str, character_bible: dict, fragment_text: st
 # Background job processing
 # ---------------------------------------------------------------------------
 
-def process_job(job_id: str, api_key: str, model: str, fragments: list, panel_count: int):
+def process_job(job_id: str, api_key: str, model: str, fragments: list, panel_count: int, art_style: str):
     job = JOBS[job_id]
     character_bible = {}
     for idx, frag_text in enumerate(fragments):
         try:
-            result = call_groq(api_key, model, character_bible, frag_text, panel_count)
+            result = call_groq(api_key, model, character_bible, frag_text, panel_count, art_style)
         except Exception as exc:
             with JOBS_LOCK:
                 job["status"] = "error"
@@ -334,7 +376,7 @@ def process_job(job_id: str, api_key: str, model: str, fragments: list, panel_co
 
 @app.route("/")
 def index():
-    return render_template("index.html", default_model=DEFAULT_MODEL)
+    return render_template("index.html", default_model=DEFAULT_MODEL, default_art_style=DEFAULT_ART_STYLE)
 
 
 @app.route("/api/start", methods=["POST"])
@@ -348,6 +390,8 @@ def api_start():
     except ValueError:
         panel_count = 3
     panel_count = max(2, min(4, panel_count))
+
+    art_style = request.form.get("art_style", "").strip() or DEFAULT_ART_STYLE
 
     if not api_key:
         return jsonify({"error": "Missing Groq API key."}), 400
@@ -365,6 +409,8 @@ def api_start():
     except Exception as exc:
         return jsonify({"error": f"Could not read file: {exc}"}), 400
 
+    text = clean_text(text)
+
     fragments = split_into_fragments(text)
     if not fragments:
         return jsonify({"error": "No text could be extracted from the file."}), 400
@@ -377,11 +423,12 @@ def api_start():
         "fragments": [],
         "character_bible": {},
         "panel_count": panel_count,
+        "art_style": art_style,
         "error": None,
     }
 
     thread = threading.Thread(
-        target=process_job, args=(job_id, api_key, model, fragments, panel_count), daemon=True
+        target=process_job, args=(job_id, api_key, model, fragments, panel_count, art_style), daemon=True
     )
     thread.start()
 
@@ -411,6 +458,7 @@ def api_export(job_id):
         return jsonify({"error": "Unknown job id."}), 404
     export = {
         "panel_count": job.get("panel_count"),
+        "art_style": job.get("art_style"),
         "character_bible": job["character_bible"],
         "fragments": job["fragments"],
     }
